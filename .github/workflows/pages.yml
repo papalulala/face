@@ -1,0 +1,52 @@
+name: Deploy face studio
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - name: Prepare website and pinned MediaPipe assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p public/vendor/wasm
+          cp index.html app.js public/
+          npm pack @mediapipe/tasks-vision@0.10.21 --pack-destination /tmp
+          tar -xzf /tmp/mediapipe-tasks-vision-0.10.21.tgz -C /tmp
+          cp /tmp/package/vision_bundle.mjs public/vendor/
+          cp /tmp/package/wasm/* public/vendor/wasm/
+          curl -fSL --retry 3 https://raw.githubusercontent.com/google-ai-edge/mediapipe/v0.10.21/mediapipe/modules/face_geometry/data/canonical_face_model.obj -o public/vendor/canonical_face_model.obj
+          curl -fSL --retry 3 https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task -o public/vendor/face_landmarker.task
+          curl -fSL --retry 3 https://raw.githubusercontent.com/google-ai-edge/mediapipe/v0.10.21/LICENSE -o public/vendor/LICENSE
+          python3 - <<'PY'
+          from pathlib import Path
+          app = Path('public/app.js')
+          text = app.read_text(encoding='utf-8-sig')
+          replacements = {
+              'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.21': './vendor',
+              'https://cdn.jsdelivr.net/gh/google-ai-edge/mediapipe@v0.10.21/mediapipe/modules/face_geometry/data/canonical_face_model.obj': './vendor/canonical_face_model.obj',
+              'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task': './vendor/face_landmarker.task',
+          }
+          for original, local in replacements.items():
+              if original not in text:
+                  raise SystemExit(f'Expected resource URL to package: {original}')
+              text = text.replace(original, local)
+          app.write_text(text, encoding='utf-8')
+          PY
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+      - uses: actions/deploy-pages@v4
